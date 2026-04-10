@@ -1,0 +1,104 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: iris-ml-pipeline
+  namespace: argo
+spec:
+  entrypoint: ml-pipeline
+  onExit: exit-handler
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 100Mi
+
+  templates:
+    - name: ml-pipeline
+      dag:
+        tasks:
+          - name: download-data
+            template: download-data
+
+          - name: preprocess
+            template: preprocess
+            dependencies: [download-data]
+
+          - name: train
+            template: train
+            dependencies: [preprocess]
+
+          - name: validate
+            template: validate
+            dependencies: [train]
+
+          - name: register
+            template: register
+            dependencies: [validate]
+            when: "{{tasks.validate.outputs.parameters.accuracy}} > 0.9"
+            arguments:
+              parameters:
+                - name: accuracy
+                  value: "{{tasks.validate.outputs.parameters.accuracy}}"
+
+    - name: download-data
+      container:
+        image: ghcr.io/jiaxiu11/iris-argo-workflow:1.0.0
+        command: [python, download_data.py]
+        volumeMounts:
+          - name: data
+            mountPath: /mnt/data
+
+    - name: preprocess
+      container:
+        image: ghcr.io/jiaxiu11/iris-argo-workflow:1.0.0
+        command: [python, preprocess.py]
+        volumeMounts:
+          - name: data
+            mountPath: /mnt/data
+
+    - name: train
+      container:
+        image: ghcr.io/jiaxiu11/iris-argo-workflow:1.0.0
+        command: [python, train.py]
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "500m"
+          limits:
+            memory: "512Mi"
+            cpu: "1"
+        volumeMounts:
+          - name: data
+            mountPath: /mnt/data
+
+    - name: validate
+      container:
+        image: ghcr.io/jiaxiu11/iris-argo-workflow:1.0.0
+        command: [python, validate.py]
+        volumeMounts:
+          - name: data
+            mountPath: /mnt/data
+      outputs:
+        parameters:
+          - name: accuracy
+            valueFrom:
+              path: /tmp/accuracy.txt
+
+    - name: register
+      inputs:
+        parameters:
+          - name: accuracy
+      container:
+        image: alpine:3.18
+        command: [sh, -c]
+        args: ["echo 'Model registered: accuracy={{inputs.parameters.accuracy}}'"]
+
+    - name: exit-handler
+      container:
+        image: alpine:3.18
+        command: [sh, -c]
+        args: ["echo 'Pipeline complete: status={{workflow.status}}'"]
