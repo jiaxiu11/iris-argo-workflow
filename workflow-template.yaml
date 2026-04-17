@@ -34,6 +34,10 @@ spec:
           - name: validate
             template: validate
             dependencies: [train]
+            arguments:
+              parameters:
+                - name: run-id
+                  value: "{{tasks.train.outputs.parameters.run-id}}"
 
           - name: register
             template: register
@@ -41,12 +45,14 @@ spec:
             when: "{{tasks.validate.outputs.parameters.accuracy}} > 0.9"
             arguments:
               parameters:
+                - name: run-id
+                  value: "{{tasks.train.outputs.parameters.run-id}}"
                 - name: accuracy
                   value: "{{tasks.validate.outputs.parameters.accuracy}}"
 
     - name: download-data
       container:
-        image: ghcr.io/jiaxiu11/iris-argo-workflow:1.0.0
+        image: ghcr.io/jiaxiu11/iris-argo-workflow:2.1.0
         command: [python, download_data.py]
         volumeMounts:
           - name: data
@@ -54,7 +60,7 @@ spec:
 
     - name: preprocess
       container:
-        image: ghcr.io/jiaxiu11/iris-argo-workflow:1.0.0
+        image: ghcr.io/jiaxiu11/iris-argo-workflow:2.1.0
         command: [python, preprocess.py]
         volumeMounts:
           - name: data
@@ -62,7 +68,7 @@ spec:
 
     - name: train
       container:
-        image: ghcr.io/jiaxiu11/iris-argo-workflow:1.0.0
+        image: ghcr.io/jiaxiu11/iris-argo-workflow:2.1.0
         command: [python, train.py]
         resources:
           requests:
@@ -74,14 +80,54 @@ spec:
         volumeMounts:
           - name: data
             mountPath: /mnt/data
+        env:
+          - name: MLFLOW_TRACKING_URI
+            value: http://mlflow.argo.svc.cluster.local:5000
+          - name: MLFLOW_S3_ENDPOINT_URL
+            value: http://minio.argo.svc.cluster.local:9000
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: mlflow-minio
+                key: access-key
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: mlflow-minio
+                key: secret-key
+      outputs:
+        parameters:
+          - name: run-id
+            valueFrom:
+              path: /tmp/run_id.txt
 
     - name: validate
+      inputs:
+        parameters:
+          - name: run-id
       container:
-        image: ghcr.io/jiaxiu11/iris-argo-workflow:1.0.0
+        image: ghcr.io/jiaxiu11/iris-argo-workflow:2.1.0
         command: [python, validate.py]
         volumeMounts:
           - name: data
             mountPath: /mnt/data
+        env:
+          - name: MLFLOW_RUN_ID
+            value: "{{inputs.parameters.run-id}}"
+          - name: MLFLOW_TRACKING_URI
+            value: http://mlflow.argo.svc.cluster.local:5000
+          - name: MLFLOW_S3_ENDPOINT_URL
+            value: http://minio.argo.svc.cluster.local:9000
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: mlflow-minio
+                key: access-key
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: mlflow-minio
+                key: secret-key
       outputs:
         parameters:
           - name: accuracy
@@ -91,11 +137,30 @@ spec:
     - name: register
       inputs:
         parameters:
+          - name: run-id
           - name: accuracy
       container:
-        image: alpine:3.18
-        command: [sh, -c]
-        args: ["echo 'Model registered: accuracy={{inputs.parameters.accuracy}}'"]
+        image: ghcr.io/jiaxiu11/iris-argo-workflow:2.1.0
+        command: [python, register.py]
+        env:
+          - name: MLFLOW_RUN_ID
+            value: "{{inputs.parameters.run-id}}"
+          - name: ACCURACY
+            value: "{{inputs.parameters.accuracy}}"
+          - name: MLFLOW_TRACKING_URI
+            value: http://mlflow.argo.svc.cluster.local:5000
+          - name: MLFLOW_S3_ENDPOINT_URL
+            value: http://minio.argo.svc.cluster.local:9000
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: mlflow-minio
+                key: access-key
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: mlflow-minio
+                key: secret-key
 
     - name: exit-handler
       container:
