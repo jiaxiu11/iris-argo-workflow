@@ -1,0 +1,13 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: iris-classifier
+  namespace: argo
+spec:
+  predictor:
+    serviceAccountName: kserve-minio-sa
+    model:
+      modelFormat:
+        name: sklearn
+      runtime: kserve-sklearnserver
+      storageUri: s3://mlflow-artifacts/1/cd8eec31f60a4ca8b01390f43cd91dfe/artifacts/model
